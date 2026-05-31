@@ -15,12 +15,7 @@ _Direction = Annotated[str, Path(pattern="^(above|below)$")]
 
 
 def _price_reference(source: str, direction: str) -> str:
-    """Return which ItemPrice field to compare against the alert target.
-
-    Bazaar "above" alerts watch the sell side (buy orders going up).
-    Everything else watches the buy side.
-    """
-    return "sell" if source == "bazaar" and direction == "above" else "buy"
+    return "sell" if source == "bazaar" and direction == "below" else "buy"
 
 
 async def _retry_pool(retries: int = 10, delay: float = 3.0) -> None:
@@ -182,20 +177,24 @@ async def notify(
     current_price = await logic.get_price(tag)
     if current_price.buy is None:
         raise HTTPException(400, "Cannot set alert: price is currently unknown.")
-    direction = "above" if price > current_price.buy else "below"
-    ref_price = (
-        current_price.sell
-        if source == "bazaar" and direction == "above"
-        else current_price.buy
-    )
-    if ref_price is None:
-        raise HTTPException(400, "Cannot set alert: reference price is currently unknown.")
-    already_fired = (
-        (direction == "above" and ref_price >= price)
-        or (direction == "below" and ref_price <= price)
-    )
-    if already_fired:
-        raise HTTPException(400, "Price has already crossed that target.")
+    if source == "bazaar":
+        if current_price.sell is None:
+            raise HTTPException(400, "Cannot set alert: price is currently unknown.")
+        low, high = current_price.sell, current_price.buy
+        if low <= price <= high:
+            raise HTTPException(
+                400,
+                f"Target must be below {low:,.2f} or above {high:,.2f}."
+            )
+        direction = "above" if price > high else "below"
+    else:
+        direction = "above" if price > current_price.buy else "below"
+        already_fired = (
+            (direction == "above" and current_price.buy >= price)
+            or (direction == "below" and current_price.buy <= price)
+        )
+        if already_fired:
+            raise HTTPException(400, "Price has already crossed that target.")
     try:
         await postgres.set_notify(
             discord_id, tag, name, source, price, channel_id, direction
