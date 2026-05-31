@@ -17,17 +17,20 @@ CREATE TABLE IF NOT EXISTS watched_items (
     tag              TEXT   NOT NULL,
     name             TEXT   NOT NULL,
     source           TEXT   NOT NULL,
-    target_above     BIGINT,
+    target_above     FLOAT8,
     channel_id_above BIGINT,
-    target_below     BIGINT,
+    target_below     FLOAT8,
     channel_id_below BIGINT,
     PRIMARY KEY (discord_id, tag)
 );
 ALTER TABLE watched_items
-    ADD COLUMN IF NOT EXISTS target_above     BIGINT,
+    ADD COLUMN IF NOT EXISTS target_above     FLOAT8,
     ADD COLUMN IF NOT EXISTS channel_id_above BIGINT,
-    ADD COLUMN IF NOT EXISTS target_below     BIGINT,
+    ADD COLUMN IF NOT EXISTS target_below     FLOAT8,
     ADD COLUMN IF NOT EXISTS channel_id_below BIGINT;
+ALTER TABLE watched_items
+    ALTER COLUMN target_above TYPE FLOAT8,
+    ALTER COLUMN target_below TYPE FLOAT8;
 """
 
 
@@ -139,7 +142,7 @@ async def set_notify(
     tag: str,
     name: str,
     source: str,
-    price: int,
+    price: float,
     channel_id: int,
     direction: str,
 ) -> None:

@@ -157,7 +157,7 @@ async def toggle(discord_id: _DiscordId, tag: _Tag) -> models.Watchlist:
 async def notify(
     discord_id: _DiscordId,
     tag: _Tag,
-    price: Annotated[int, Query(gt=0, le=9_223_372_036_854_775_807)],
+    price: Annotated[float, Query(gt=0, le=1e18)],
     channel_id: Annotated[int, Query(gt=0)],
 ) -> models.Watchlist:
     """Set a price alert on a watched item.
@@ -226,7 +226,7 @@ async def triggered() -> list[models.Triggered]:
 
     async def _fetch_safe(tag: str) -> models.ItemPrice | None:
         try:
-            p = await logic.get_price(tag)
+            p = await logic.fetch_price_fresh(tag)
             return None if p.status == "unknown" else p
         except Exception:
             return None

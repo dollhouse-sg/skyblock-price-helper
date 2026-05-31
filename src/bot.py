@@ -45,18 +45,18 @@ def _coin(n: float | None) -> str:
     return val
 
 
-_MAX_PRICE = 9_223_372_036_854_775_807  # Postgres BIGINT max
+_MAX_PRICE = 1e18
 
 
-def _parse_price(s: str) -> int:
+def _parse_price(s: str) -> float:
     s = s.strip().lower().replace(",", "")
     suffixes = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}
     for suffix, mult in suffixes.items():
         if s.endswith(suffix):
-            result = round(float(s[:-1]) * mult)
+            result = float(s[:-1]) * mult
             break
     else:
-        result = round(float(s))
+        result = float(s)
     if result > _MAX_PRICE:
         raise ValueError("Price too large.")
     return result
@@ -324,17 +324,17 @@ async def cmd_watch(
             "Specify an item.", ephemeral=True
         )
         return
-    price_int: int | None = None
+    price_val: float | None = None
     if price is not None:
         try:
-            price_int = _parse_price(price)
+            price_val = _parse_price(price)
         except ValueError:
             await interaction.response.send_message(
-                "Invalid price. Use a number like `110k`, `1.5m`, or `2b`.",
+                "Invalid price.",
                 ephemeral=True,
             )
             return
-        if price_int <= 0:
+        if price_val <= 0:
             await interaction.response.send_message(
                 "Price must be positive.", ephemeral=True
             )
@@ -348,13 +348,13 @@ async def cmd_watch(
             wl = await _api("GET", f"/watch/{uid}")
             await interaction.followup.send(embed=_watchlist_embed(wl, uname))
             return
-        if price_int is not None:
-            log.info("/watch alert %s @ %s — %s (%s)", item, price_int, uname, uid)
+        if price_val is not None:
+            log.info("/watch alert %s @ %s — %s (%s)", item, price_val, uname, uid)
             wl = await _api(
                 "POST",
                 f"/watch/{uid}/{item}/notify",
                 params={
-                    "price": price_int,
+                    "price": price_val,
                     "channel_id": interaction.channel_id,
                 },
             )

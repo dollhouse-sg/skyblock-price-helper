@@ -52,8 +52,8 @@ class WatchedItem(BaseModel):
     tag: str
     name: str
     source: str
-    target_above: int | None
-    target_below: int | None
+    target_above: float | None
+    target_below: float | None
     buy: float | None
     sell: float | None
     status: str
@@ -98,4 +98,4 @@ class Triggered(BaseModel):
     sell: float | None
     direction: str
     channel_id: int
-    target: int
+    target: float

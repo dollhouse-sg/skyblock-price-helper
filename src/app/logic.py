@@ -171,12 +171,12 @@ async def get_price(tag: str) -> ItemPrice:
         entry = _price_cache.get(tag)
         if entry is not None and time.monotonic() - entry[0] < _PRICE_CACHE_TTL:
             return entry[1]
-        price = await _fetch_price(tag)
+        price = await fetch_price_fresh(tag)
         _price_cache[tag] = (time.monotonic(), price)
         return price
 
 
-async def _fetch_price(tag: str) -> ItemPrice:
+async def fetch_price_fresh(tag: str) -> ItemPrice:
     """Fetch live price data from the SkyApi for a single item.
 
     Args:
