@@ -225,12 +225,39 @@ async def cmd_help(interaction: discord.Interaction) -> None:
         interaction: The Discord interaction context.
     """
     log.info("/help — %s (%s)", interaction.user.display_name, interaction.user.id)
-    embed = discord.Embed(title="Commands", color=0xFFB6C1)
-    embed.add_field(name="/price <item>", value="Get the current price.", inline=False)
-    embed.add_field(name="/watch", value="Show your watchlist.", inline=False)
-    embed.add_field(name="/watch <item>", value="Add or remove from watchlist.", inline=False)
-    embed.add_field(name="/watch <item> <price>", value="Set a price alert.", inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    embed = discord.Embed(
+        title="Command Guide",
+        description="Track Hypixel Skyblock prices and get alerted when items hit your target.",
+        color=0xFFB6C1,
+    )
+    embed.add_field(
+        name="/price <item>",
+        value=(
+            "Look up the current Bazaar or Auction House price for an item.\n"
+            "Start typing to autocomplete item names."
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="/watch",
+        value="Show your watchlist — up to **10 items** with their tracked prices.",
+        inline=False,
+    )
+    embed.add_field(
+        name="/watch <item>",
+        value=(
+            "Add an item to your watchlist, or just run the command to remove it if it's already there."
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="/watch <item> <price>",
+        value=(
+            "Set a price alert for an item — you'll be pinged when the price hits your target."
+        ),
+        inline=False,
+    )
+    await interaction.response.send_message(embed=embed)
 
 
 @tree.command(name="price", description="Look up an item's current price.")
