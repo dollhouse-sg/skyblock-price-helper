@@ -167,25 +167,15 @@ def _watchlist_embed(wl: dict, user_name: str) -> discord.Embed:
     return embed
 
 
-def _alert_embed(hit: dict) -> discord.Embed:
-    """Build an alert embed for a triggered price notification.
-
-    Args:
-        hit: A Triggered payload returned by /notifications/triggered.
-
-    Returns:
-        A discord.Embed showing the item, target, and current prices.
-    """
-    direction_label = "Above" if hit["direction"] == "above" else "Below"
-    embed = discord.Embed(title=hit["name"], color=0xFFB6C1)
-    embed.add_field(name="Alert", value=direction_label, inline=True)
-    embed.add_field(name="Target", value=_coin(hit["target"]), inline=True)
-    if hit["source"] == "bazaar":
-        embed.add_field(name="Buy", value=_coin(hit["sell"]), inline=True)
-        embed.add_field(name="Sell", value=_coin(hit["buy"]), inline=True)
+def _alert_text(hit: dict) -> str:
+    name = hit["name"]
+    target = _coin(hit["target"])
+    if hit["direction"] == "above":
+        current = _coin(hit["buy"])
+        return f"**{name}** is above your target of {target} — now {current}"
     else:
-        embed.add_field(name="LBIN", value=_coin(hit["buy"]), inline=True)
-    return embed
+        current = _coin(hit["sell"])
+        return f"**{name}** is below your target of {target} — now {current}"
 
 
 @tree.command(name="logs", description="Send recent log files.")
@@ -445,7 +435,7 @@ async def alert_loop() -> None:
                     await _api("DELETE", clear_path)
                     continue
                 user = await client.fetch_user(hit["discord_id"])
-                await ch.send(content=user.mention, embed=_alert_embed(hit))
+                await ch.send(f"{user.mention} {_alert_text(hit)}")
                 await _api("DELETE", clear_path)
                 log.info(
                     "alert delivered: %s → %s (%s %s)",
