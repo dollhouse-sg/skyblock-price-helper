@@ -1,0 +1,10 @@
+.env
+logs/
+__pycache__/
+*.py[cod]
+*.pyo
+.python-version
+.git/
+.gitignore
+.dockerignore
+README.md

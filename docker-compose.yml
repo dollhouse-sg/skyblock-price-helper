@@ -1,0 +1,69 @@
+name: skyblock
+
+networks:
+  skyblock-net:
+    name: skyblock-net
+
+services:
+  postgres:
+    container_name: skyblock-pg
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - skyblock-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - skyblock-net
+
+  api:
+    container_name: skyblock-api
+    image: skyblock-api:latest
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    environment:
+      LOG_DIR: /app/logs
+      TZ: Asia/Singapore
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/items')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - skyblock-net
+
+  bot:
+    container_name: skyblock-bot
+    image: skyblock-bot:latest
+    build: .
+    command: python bot.py
+    env_file: .env
+    environment:
+      LOG_DIR: /app/logs
+      TZ: Asia/Singapore
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - skyblock-net
+
+volumes:
+  skyblock-pgdata:
+    name: skyblock-pgdata
