@@ -157,7 +157,7 @@ async def toggle(discord_id: _DiscordId, tag: _Tag) -> models.Watchlist:
 async def notify(
     discord_id: _DiscordId,
     tag: _Tag,
-    price: Annotated[int, Query(gt=0)],
+    price: Annotated[int, Query(gt=0, le=9_223_372_036_854_775_807)],
     channel_id: Annotated[int, Query(gt=0)],
 ) -> models.Watchlist:
     """Set a price alert on a watched item.
@@ -190,8 +190,12 @@ async def notify(
     )
     if ref_price is None:
         raise HTTPException(400, "Cannot set alert: reference price is currently unknown.")
-    if price == ref_price:
-        raise HTTPException(400, "Target price must differ from the current price.")
+    already_fired = (
+        (direction == "above" and ref_price >= price)
+        or (direction == "below" and ref_price <= price)
+    )
+    if already_fired:
+        raise HTTPException(400, "Price has already crossed that target.")
     try:
         await postgres.set_notify(
             discord_id, tag, name, source, price, channel_id, direction

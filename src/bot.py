@@ -45,13 +45,21 @@ def _coin(n: float | None) -> str:
     return val
 
 
+_MAX_PRICE = 9_223_372_036_854_775_807  # Postgres BIGINT max
+
+
 def _parse_price(s: str) -> int:
     s = s.strip().lower().replace(",", "")
     suffixes = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}
     for suffix, mult in suffixes.items():
         if s.endswith(suffix):
-            return round(float(s[:-1]) * mult)
-    return round(float(s))
+            result = round(float(s[:-1]) * mult)
+            break
+    else:
+        result = round(float(s))
+    if result > _MAX_PRICE:
+        raise ValueError("Price too large.")
+    return result
 
 
 def _channel_guard(interaction: discord.Interaction) -> bool:
@@ -260,14 +268,17 @@ async def cmd_price(interaction: discord.Interaction, item: str) -> None:
         data = await _api("GET", f"/price/{item}")
         await interaction.followup.send(embed=_price_embed(data))
     except httpx.HTTPStatusError as exc:
-        try:
-            detail = exc.response.json().get("detail", str(exc))
-        except Exception:
-            detail = str(exc)
-        log.warning("/price %s failed for %s — %s", item, interaction.user.id, detail)
-        await interaction.followup.send(detail)
+        log.warning("/price %s failed for %s — %s", item, interaction.user.id, exc)
+        if exc.response.status_code < 500:
+            try:
+                detail = exc.response.json().get("detail", "Something went wrong.")
+            except Exception:
+                detail = "Something went wrong."
+        else:
+            detail = "Something went wrong. Please try again."
+        await interaction.followup.send(detail, ephemeral=True)
     except Exception:
-        await interaction.followup.send("Service unavailable.")
+        await interaction.followup.send("Service unavailable.", ephemeral=True)
 
 
 @cmd_price.autocomplete("item")
@@ -355,14 +366,17 @@ async def cmd_watch(
             content=status, embed=_watchlist_embed(wl, uname), ephemeral=True
         )
     except httpx.HTTPStatusError as exc:
-        try:
-            detail = exc.response.json().get("detail", str(exc))
-        except Exception:
-            detail = str(exc)
-        log.warning("/watch %s failed for %s — %s", item, uid, detail)
-        await interaction.followup.send(detail)
+        log.warning("/watch %s failed for %s — %s", item, uid, exc)
+        if exc.response.status_code < 500:
+            try:
+                detail = exc.response.json().get("detail", "Something went wrong.")
+            except Exception:
+                detail = "Something went wrong."
+        else:
+            detail = "Something went wrong. Please try again."
+        await interaction.followup.send(detail, ephemeral=True)
     except Exception:
-        await interaction.followup.send("Service unavailable.")
+        await interaction.followup.send("Service unavailable.", ephemeral=True)
 
 
 @cmd_watch.autocomplete("item")
