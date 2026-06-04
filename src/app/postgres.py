@@ -77,6 +77,26 @@ async def fetch_watchlist(discord_id: int) -> list[asyncpg.Record]:
     )
 
 
+async def fetch_watch_item(discord_id: int, tag: str) -> asyncpg.Record | None:
+    """Fetch a single watched item with alert channel details.
+
+    Args:
+        discord_id: The Discord user's snowflake ID.
+        tag: Unique item identifier.
+
+    Returns:
+        A database row from watched_items, or None if missing.
+    """
+    pool = await get_pool()
+    return await pool.fetchrow(
+        "SELECT tag, name, source, target_above, channel_id_above, "
+        "target_below, channel_id_below "
+        "FROM watched_items WHERE discord_id=$1 AND tag=$2",
+        discord_id,
+        tag,
+    )
+
+
 async def toggle_item(discord_id: int, tag: str, name: str, source: str) -> bool:
     """Add an item to the watchlist, or remove it if already present.
 

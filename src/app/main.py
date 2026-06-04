@@ -174,6 +174,34 @@ async def notify(
         raise HTTPException(404, f"Unknown item: {tag}")
     source = logic.item_source(item)
     name = logic.clean_name(item.get("name") or tag) or tag
+    existing = await postgres.fetch_watch_item(discord_id, tag)
+    matched_direction: str | None = None
+    if existing:
+        if (
+            existing["target_above"] == price
+            and existing["channel_id_above"] == channel_id
+        ):
+            matched_direction = "above"
+        elif (
+            existing["target_below"] == price
+            and existing["channel_id_below"] == channel_id
+        ):
+            matched_direction = "below"
+    if matched_direction is not None:
+        try:
+            cleared = await postgres.set_notify(
+                discord_id, tag, name, source, price, channel_id, matched_direction
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        rows = await postgres.fetch_watchlist(discord_id)
+        if cleared:
+            action = f"alert_cleared\x1f{name}\x1f{price}\x1f{matched_direction}"
+        else:
+            action = f"alert_set\x1f{name}\x1f{price}\x1f{matched_direction}"
+        return models.Watchlist(
+            discord_id=discord_id, items=await _enrich(rows), action=action
+        )
     current_price = await logic.get_price(tag)
     if current_price.buy is None:
         raise HTTPException(400, "Cannot set alert: price is currently unknown.")
