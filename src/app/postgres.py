@@ -196,15 +196,24 @@ async def set_notify(
                     name,
                     source,
                 )
-                existing_above = None
-                existing_channel_above = None
-                existing_below = None
-                existing_channel_below = None
+                (
+                    existing_above,
+                    existing_channel_above,
+                    existing_below,
+                    existing_channel_below,
+                ) = (None, None, None, None)
             else:
-                existing_above = existing["target_above"]
-                existing_channel_above = existing["channel_id_above"]
-                existing_below = existing["target_below"]
-                existing_channel_below = existing["channel_id_below"]
+                (
+                    existing_above,
+                    existing_channel_above,
+                    existing_below,
+                    existing_channel_below,
+                ) = (
+                    existing["target_above"],
+                    existing["channel_id_above"],
+                    existing["target_below"],
+                    existing["channel_id_below"],
+                )
             if direction == "above":
                 if (
                     existing_above == price
