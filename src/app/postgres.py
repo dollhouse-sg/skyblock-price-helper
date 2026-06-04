@@ -196,7 +196,8 @@ async def set_notify(
                     name,
                     source,
                 )
-                existing_above = existing_channel_above = existing_below = existing_channel_below = None
+                existing_above, existing_channel_above = None, None
+                existing_below, existing_channel_below = None, None
             else:
                 (
                     existing_above,
