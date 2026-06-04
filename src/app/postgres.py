@@ -145,11 +145,12 @@ async def set_notify(
     price: float,
     channel_id: int,
     direction: str,
-) -> None:
+) -> bool:
     """Set or overwrite a price alert for one direction on a watched item.
 
     Adds the item to the watchlist first if it is not already present.
     Setting an alert for one direction leaves the other direction untouched.
+    Recreating the same alert in the same channel clears it (toggle off).
 
     Args:
         discord_id: The Discord user's snowflake ID.
@@ -162,6 +163,9 @@ async def set_notify(
 
     Raises:
         ValueError: If the watchlist is full and the item is not yet in it.
+
+    Returns:
+        True if the alert was cleared (toggled off), False if set or updated.
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -171,7 +175,8 @@ async def set_notify(
         )
         async with conn.transaction():
             existing = await conn.fetchrow(
-                "SELECT 1 FROM watched_items WHERE discord_id=$1 AND tag=$2",
+                "SELECT target_above, channel_id_above, target_below, channel_id_below "
+                "FROM watched_items WHERE discord_id=$1 AND tag=$2",
                 discord_id,
                 tag,
             )
@@ -191,7 +196,33 @@ async def set_notify(
                     name,
                     source,
                 )
+                existing = {
+                    "target_above": None,
+                    "channel_id_above": None,
+                    "target_below": None,
+                    "channel_id_below": None,
+                }
+            existing_above, existing_channel_above = (
+                existing["target_above"],
+                existing["channel_id_above"],
+            )
+            existing_below, existing_channel_below = (
+                existing["target_below"],
+                existing["channel_id_below"],
+            )
             if direction == "above":
+                if (
+                    existing_above == price
+                    and existing_channel_above == channel_id
+                ):
+                    await conn.execute(
+                        """UPDATE watched_items
+                           SET target_above=NULL, channel_id_above=NULL
+                           WHERE discord_id=$1 AND tag=$2""",
+                        discord_id,
+                        tag,
+                    )
+                    return True
                 await conn.execute(
                     """UPDATE watched_items
                        SET target_above=$3, channel_id_above=$4
@@ -202,6 +233,18 @@ async def set_notify(
                     channel_id,
                 )
             else:
+                if (
+                    existing_below == price
+                    and existing_channel_below == channel_id
+                ):
+                    await conn.execute(
+                        """UPDATE watched_items
+                           SET target_below=NULL, channel_id_below=NULL
+                           WHERE discord_id=$1 AND tag=$2""",
+                        discord_id,
+                        tag,
+                    )
+                    return True
                 await conn.execute(
                     """UPDATE watched_items
                        SET target_below=$3, channel_id_below=$4
@@ -211,6 +254,7 @@ async def set_notify(
                     price,
                     channel_id,
                 )
+    return False
 
 
 async def fetch_alerts() -> list[asyncpg.Record]:

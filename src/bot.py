@@ -93,7 +93,7 @@ def _action_status(action: str | None) -> str | None:
     """Convert a watchlist action token into a human-readable status line.
 
     Tokens are unit-separator (U+001F) delimited fields. Supported kinds:
-    ``added``, ``removed``, and ``alert_set``.
+    ``added``, ``removed``, ``alert_set``, and ``alert_cleared``.
 
     Args:
         action: Action token from the API, e.g. ``"added\\x1fSugar Cane"``
@@ -117,6 +117,12 @@ def _action_status(action: str | None) -> str | None:
         except ValueError:
             price_str = parts[2]
         return f"Alert set for **{parts[1]}** at **{price_str}**."
+    if kind == "alert_cleared" and len(parts) >= 3:
+        try:
+            price_str = _coin(float(parts[2]))
+        except ValueError:
+            price_str = parts[2]
+        return f"Alert cleared for **{parts[1]}** at **{price_str}**."
     return None
 
 

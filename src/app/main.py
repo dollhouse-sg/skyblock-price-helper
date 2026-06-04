@@ -196,13 +196,16 @@ async def notify(
         if already_fired:
             raise HTTPException(400, "Price has already crossed that target.")
     try:
-        await postgres.set_notify(
+        cleared = await postgres.set_notify(
             discord_id, tag, name, source, price, channel_id, direction
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     rows = await postgres.fetch_watchlist(discord_id)
-    action = f"alert_set\x1f{name}\x1f{price}\x1f{direction}"
+    if cleared:
+        action = f"alert_cleared\x1f{name}\x1f{price}\x1f{direction}"
+    else:
+        action = f"alert_set\x1f{name}\x1f{price}\x1f{direction}"
     return models.Watchlist(
         discord_id=discord_id, items=await _enrich(rows), action=action
     )
