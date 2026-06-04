@@ -175,8 +175,8 @@ async def set_notify(
         )
         async with conn.transaction():
             existing = await conn.fetchrow(
-                "SELECT target_above, channel_id_above, target_below, channel_id_below"
-                " FROM watched_items WHERE discord_id=$1 AND tag=$2",
+                """SELECT target_above, channel_id_above, target_below, channel_id_below
+                   FROM watched_items WHERE discord_id=$1 AND tag=$2""",
                 discord_id,
                 tag,
             )
@@ -196,12 +196,7 @@ async def set_notify(
                     name,
                     source,
                 )
-                (
-                    existing_above,
-                    existing_channel_above,
-                    existing_below,
-                    existing_channel_below,
-                ) = (None, None, None, None)
+                existing_above = existing_channel_above = existing_below = existing_channel_below = None
             else:
                 (
                     existing_above,
