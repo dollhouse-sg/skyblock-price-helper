@@ -105,8 +105,15 @@ async def get_items() -> list[dict]:
             _items = r.json()
             _items_loaded_at = time.monotonic()
             log.info("item list refreshed (%d items)", len(_items))
+        except httpx.HTTPStatusError as exc:
+            log.warning(
+                "item list refresh failed — HTTP %s %s: %s",
+                exc.response.status_code,
+                exc.request.url,
+                exc.response.text[:200],
+            )
         except Exception as exc:
-            log.warning("item list refresh failed — %s", type(exc).__name__)
+            log.warning("item list refresh failed — %s: %s", type(exc).__name__, exc)
     return _items
 
 
@@ -174,7 +181,8 @@ async def get_price(tag: str) -> ItemPrice:
         if entry is not None and time.monotonic() - entry[0] < _PRICE_CACHE_TTL:
             return entry[1]
         price = await fetch_price_fresh(tag)
-        _price_cache[tag] = (time.monotonic(), price)
+        if price.status != "unknown":
+            _price_cache[tag] = (time.monotonic(), price)
         return price
 
 
@@ -212,8 +220,16 @@ async def fetch_price_fresh(tag: str) -> ItemPrice:
             sell=sell_val,
             status="ok",
         )
+    except httpx.HTTPStatusError as exc:
+        log.warning(
+            "price fetch failed: %s — HTTP %s %s: %s",
+            tag,
+            exc.response.status_code,
+            exc.request.url,
+            exc.response.text[:200],
+        )
     except Exception as exc:
-        log.warning("price fetch failed: %s — %s", tag, type(exc).__name__)
+        log.warning("price fetch failed: %s — %s: %s", tag, type(exc).__name__, exc)
         return ItemPrice(
             tag=tag, name=name, source=source, buy=None, sell=None, status="unknown"
         )

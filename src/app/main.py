@@ -34,10 +34,11 @@ async def _retry_pool(retries: int = 10, delay: float = 3.0) -> None:
             return
         except Exception as exc:
             log.warning(
-                "postgres connection attempt %d/%d failed — %s",
+                "postgres connection attempt %d/%d failed — %s: %s",
                 attempt + 1,
                 retries,
                 type(exc).__name__,
+                exc,
             )
             await asyncio.sleep(delay)
     raise RuntimeError("Could not connect to Postgres.")
@@ -272,7 +273,8 @@ async def triggered() -> list[models.Triggered]:
         try:
             p = await logic.fetch_price_fresh(tag)
             return None if p.status == "unknown" else p
-        except Exception:
+        except Exception as exc:
+            log.warning("alert price fetch failed: %s — %s: %s", tag, type(exc).__name__, exc)
             return None
 
     prices = await asyncio.gather(*[_fetch_safe(row["tag"]) for row in rows])
@@ -342,7 +344,8 @@ async def _enrich(rows: list) -> list[models.WatchedItem]:
         try:
             p = await logic.get_price(row["tag"])
             buy, sell, status, source = p.buy, p.sell, p.status, p.source
-        except Exception:
+        except Exception as exc:
+            log.warning("watchlist price fetch failed: %s — %s: %s", row["tag"], type(exc).__name__, exc)
             buy = sell = None
             status = "unknown"
             source = row["source"]

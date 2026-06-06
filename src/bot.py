@@ -346,9 +346,10 @@ async def cmd_price(interaction: discord.Interaction, item: str) -> None:
         data = await _api("GET", f"/price/{item}")
         await interaction.followup.send(embed=_price_embed(data))
     except httpx.HTTPStatusError as exc:
-        log.warning("/price %s failed for %s — %s", item, interaction.user.id, exc)
+        log.warning("/price %s failed for %s — HTTP %s: %s", item, interaction.user.id, exc.response.status_code, exc.response.text[:200])
         await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
-    except Exception:
+    except Exception as exc:
+        log.warning("/price %s failed for %s — %s: %s", item, interaction.user.id, type(exc).__name__, exc)
         await interaction.followup.send("Service unavailable.", ephemeral=True)
 
 
@@ -382,9 +383,10 @@ async def cmd_watchlist(interaction: discord.Interaction) -> None:
             embed=_watchlist_embed(wl, uname), ephemeral=True
         )
     except httpx.HTTPStatusError as exc:
-        log.warning("/watchlist failed for %s — %s", uid, exc)
+        log.warning("/watchlist failed for %s — HTTP %s: %s", uid, exc.response.status_code, exc.response.text[:200])
         await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
-    except Exception:
+    except Exception as exc:
+        log.warning("/watchlist failed for %s — %s: %s", uid, type(exc).__name__, exc)
         await interaction.followup.send("Service unavailable.", ephemeral=True)
 
 
@@ -418,9 +420,10 @@ async def cmd_watch(interaction: discord.Interaction, item: str) -> None:
             ephemeral=True,
         )
     except httpx.HTTPStatusError as exc:
-        log.warning("/watch %s failed for %s — %s", item, uid, exc)
+        log.warning("/watch %s failed for %s — HTTP %s: %s", item, uid, exc.response.status_code, exc.response.text[:200])
         await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
-    except Exception:
+    except Exception as exc:
+        log.warning("/watch %s failed for %s — %s: %s", item, uid, type(exc).__name__, exc)
         await interaction.followup.send("Service unavailable.", ephemeral=True)
 
 
@@ -461,9 +464,10 @@ async def cmd_unwatch(interaction: discord.Interaction, item: str) -> None:
             ephemeral=True,
         )
     except httpx.HTTPStatusError as exc:
-        log.warning("/unwatch %s failed for %s — %s", item, uid, exc)
+        log.warning("/unwatch %s failed for %s — HTTP %s: %s", item, uid, exc.response.status_code, exc.response.text[:200])
         await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
-    except Exception:
+    except Exception as exc:
+        log.warning("/unwatch %s failed for %s — %s: %s", item, uid, type(exc).__name__, exc)
         await interaction.followup.send("Service unavailable.", ephemeral=True)
 
 
@@ -525,9 +529,10 @@ async def cmd_alert(
             ephemeral=True,
         )
     except httpx.HTTPStatusError as exc:
-        log.warning("/alert %s failed for %s — %s", item, uid, exc)
+        log.warning("/alert %s failed for %s — HTTP %s: %s", item, uid, exc.response.status_code, exc.response.text[:200])
         await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
-    except Exception:
+    except Exception as exc:
+        log.warning("/alert %s failed for %s — %s: %s", item, uid, type(exc).__name__, exc)
         await interaction.followup.send("Service unavailable.", ephemeral=True)
 
 
@@ -592,9 +597,10 @@ async def cmd_unalert(
             ephemeral=True,
         )
     except httpx.HTTPStatusError as exc:
-        log.warning("/unalert %s failed for %s — %s", item, uid, exc)
+        log.warning("/unalert %s failed for %s — HTTP %s: %s", item, uid, exc.response.status_code, exc.response.text[:200])
         await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
-    except Exception:
+    except Exception as exc:
+        log.warning("/unalert %s failed for %s — %s: %s", item, uid, type(exc).__name__, exc)
         await interaction.followup.send("Service unavailable.", ephemeral=True)
 
 
@@ -617,8 +623,12 @@ async def alert_loop() -> None:
     while not client.is_closed():
         try:
             hits = await _api("GET", "/notifications/triggered") or []
+        except httpx.HTTPStatusError as exc:
+            log.warning("alert poll error — HTTP %s: %s", exc.response.status_code, exc.response.text[:200])
+            await asyncio.sleep(ALERT_POLL_SECONDS)
+            continue
         except Exception as exc:
-            log.warning("alert poll error — %s", type(exc).__name__)
+            log.warning("alert poll error — %s: %s", type(exc).__name__, exc)
             await asyncio.sleep(ALERT_POLL_SECONDS)
             continue
         for hit in hits:
@@ -648,10 +658,11 @@ async def alert_loop() -> None:
                 )
             except (discord.NotFound, discord.Forbidden) as exc:
                 log.warning(
-                    "alert cleared (permanent error): %s → %s — %s",
+                    "alert cleared (permanent error): %s → %s — %s: %s",
                     hit["name"],
                     hit["discord_id"],
                     type(exc).__name__,
+                    exc,
                 )
                 try:
                     await _api("DELETE", clear_path)
@@ -659,10 +670,11 @@ async def alert_loop() -> None:
                     pass
             except Exception as exc:
                 log.warning(
-                    "alert delivery failed: %s → %s — %s",
+                    "alert delivery failed: %s → %s — %s: %s",
                     hit["name"],
                     hit["discord_id"],
                     type(exc).__name__,
+                    exc,
                 )
         await asyncio.sleep(ALERT_POLL_SECONDS)
 
