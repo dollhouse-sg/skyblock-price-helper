@@ -132,7 +132,6 @@ def _price_embed(data: dict) -> discord.Embed:
         embed.add_field(name="Sell", value=_coin(data["sell"]), inline=True)
     else:
         embed.add_field(name="LBIN", value=_coin(data["buy"]), inline=True)
-    embed.set_footer(text=f"v{VERSION}")
     return embed
 
 
@@ -149,7 +148,6 @@ def _watchlist_embed(wl: dict, user_name: str) -> discord.Embed:
     embed = discord.Embed(title=f"{user_name}'s Watchlist", color=0xFFB6C1)
     if not wl["items"]:
         embed.description = "No items."
-        embed.set_footer(text=f"v{VERSION}")
         return embed
     for item in wl["items"]:
         if item["source"] == "bazaar":
@@ -161,7 +159,6 @@ def _watchlist_embed(wl: dict, user_name: str) -> discord.Embed:
         if item["target_below"] is not None:
             val += f"\n↓ Alert @ {_coin(item['target_below'])}"
         embed.add_field(name=item["name"], value=val, inline=False)
-    embed.set_footer(text=f"v{VERSION}")
     return embed
 
 
