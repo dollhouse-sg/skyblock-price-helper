@@ -239,10 +239,10 @@ async def cmd_logs(interaction: discord.Interaction) -> None:
         interaction: The Discord interaction context.
     """
     if interaction.user.id != OWNER_ID:
-        await interaction.response.send_message("Not authorised.", ephemeral=True)
+        await interaction.response.send_message("Not authorised.",)
         return
     if interaction.guild is not None:
-        await interaction.response.send_message("DM only.", ephemeral=True)
+        await interaction.response.send_message("DM only.",)
         return
     await interaction.response.defer()
     base = os.environ.get("LOG_DIR", "logs")
@@ -332,8 +332,7 @@ async def cmd_price(interaction: discord.Interaction, item: str) -> None:
     """
     if not _channel_guard(interaction):
         await interaction.response.send_message(
-            "Not allowed in this channel.", ephemeral=True
-        )
+            "Not allowed in this channel."        )
         return
     log.info(
         "/price %s — %s (%s)",
@@ -347,10 +346,10 @@ async def cmd_price(interaction: discord.Interaction, item: str) -> None:
         await interaction.followup.send(embed=_price_embed(data))
     except httpx.HTTPStatusError as exc:
         log.warning("/price %s failed for %s — HTTP %s: %s", item, interaction.user.id, exc.response.status_code, exc.response.text[:200])
-        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
+        await interaction.followup.send(_http_error_detail(exc),)
     except Exception as exc:
         log.warning("/price %s failed for %s — %s: %s", item, interaction.user.id, type(exc).__name__, exc)
-        await interaction.followup.send("Service unavailable.", ephemeral=True)
+        await interaction.followup.send("Service unavailable.",)
 
 
 @cmd_price.autocomplete("item")
@@ -370,24 +369,22 @@ async def cmd_watchlist(interaction: discord.Interaction) -> None:
     """
     if not _channel_guard(interaction):
         await interaction.response.send_message(
-            "Not allowed in this channel.", ephemeral=True
-        )
+            "Not allowed in this channel."        )
         return
     uid = interaction.user.id
     uname = interaction.user.display_name
     log.info("/watchlist — %s (%s)", uname, uid)
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
     try:
         wl = await _api("GET", f"/watchlist/{uid}")
         await interaction.followup.send(
-            embed=_watchlist_embed(wl, uname), ephemeral=True
-        )
+            embed=_watchlist_embed(wl, uname)        )
     except httpx.HTTPStatusError as exc:
         log.warning("/watchlist failed for %s — HTTP %s: %s", uid, exc.response.status_code, exc.response.text[:200])
-        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
+        await interaction.followup.send(_http_error_detail(exc),)
     except Exception as exc:
         log.warning("/watchlist failed for %s — %s: %s", uid, type(exc).__name__, exc)
-        await interaction.followup.send("Service unavailable.", ephemeral=True)
+        await interaction.followup.send("Service unavailable.",)
 
 
 @tree.command(name="watch", description="Add an item to your watchlist.")
@@ -401,13 +398,12 @@ async def cmd_watch(interaction: discord.Interaction, item: str) -> None:
     """
     if not _channel_guard(interaction):
         await interaction.response.send_message(
-            "Not allowed in this channel.", ephemeral=True
-        )
+            "Not allowed in this channel."        )
         return
     uid = interaction.user.id
     uname = interaction.user.display_name
     log.info("/watch %s — %s (%s)", item, uname, uid)
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
     try:
         wl = await _api("POST", f"/watch/{uid}/{item}")
         added = next(
@@ -417,14 +413,13 @@ async def cmd_watch(interaction: discord.Interaction, item: str) -> None:
         await interaction.followup.send(
             content=f"**{name}** added to your watchlist.",
             embed=_watchlist_embed(wl, uname),
-            ephemeral=True,
-        )
+                   )
     except httpx.HTTPStatusError as exc:
         log.warning("/watch %s failed for %s — HTTP %s: %s", item, uid, exc.response.status_code, exc.response.text[:200])
-        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
+        await interaction.followup.send(_http_error_detail(exc),)
     except Exception as exc:
         log.warning("/watch %s failed for %s — %s: %s", item, uid, type(exc).__name__, exc)
-        await interaction.followup.send("Service unavailable.", ephemeral=True)
+        await interaction.followup.send("Service unavailable.",)
 
 
 @cmd_watch.autocomplete("item")
@@ -449,26 +444,24 @@ async def cmd_unwatch(interaction: discord.Interaction, item: str) -> None:
     """
     if not _channel_guard(interaction):
         await interaction.response.send_message(
-            "Not allowed in this channel.", ephemeral=True
-        )
+            "Not allowed in this channel."        )
         return
     uid = interaction.user.id
     uname = interaction.user.display_name
     log.info("/unwatch %s — %s (%s)", item, uname, uid)
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
     try:
         wl = await _api("DELETE", f"/watch/{uid}/{item}")
         await interaction.followup.send(
             content="Removed from your watchlist.",
             embed=_watchlist_embed(wl, uname),
-            ephemeral=True,
-        )
+                   )
     except httpx.HTTPStatusError as exc:
         log.warning("/unwatch %s failed for %s — HTTP %s: %s", item, uid, exc.response.status_code, exc.response.text[:200])
-        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
+        await interaction.followup.send(_http_error_detail(exc),)
     except Exception as exc:
         log.warning("/unwatch %s failed for %s — %s: %s", item, uid, type(exc).__name__, exc)
-        await interaction.followup.send("Service unavailable.", ephemeral=True)
+        await interaction.followup.send("Service unavailable.",)
 
 
 @cmd_unwatch.autocomplete("item")
@@ -496,23 +489,21 @@ async def cmd_alert(
     """
     if not _channel_guard(interaction):
         await interaction.response.send_message(
-            "Not allowed in this channel.", ephemeral=True
-        )
+            "Not allowed in this channel."        )
         return
     try:
         price_val = _parse_price(price)
     except ValueError:
-        await interaction.response.send_message("Invalid price.", ephemeral=True)
+        await interaction.response.send_message("Invalid price.",)
         return
     if price_val <= 0:
         await interaction.response.send_message(
-            "Price must be positive.", ephemeral=True
-        )
+            "Price must be positive."        )
         return
     uid = interaction.user.id
     uname = interaction.user.display_name
     log.info("/alert %s @ %s — %s (%s)", item, price_val, uname, uid)
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
     try:
         wl = await _api(
             "POST",
@@ -526,14 +517,13 @@ async def cmd_alert(
         await interaction.followup.send(
             content=f"Alert set for **{name}** at **{_coin(price_val)}**.",
             embed=_watchlist_embed(wl, uname),
-            ephemeral=True,
-        )
+                   )
     except httpx.HTTPStatusError as exc:
         log.warning("/alert %s failed for %s — HTTP %s: %s", item, uid, exc.response.status_code, exc.response.text[:200])
-        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
+        await interaction.followup.send(_http_error_detail(exc),)
     except Exception as exc:
         log.warning("/alert %s failed for %s — %s: %s", item, uid, type(exc).__name__, exc)
-        await interaction.followup.send("Service unavailable.", ephemeral=True)
+        await interaction.followup.send("Service unavailable.",)
 
 
 @cmd_alert.autocomplete("item")
@@ -563,26 +553,24 @@ async def cmd_unalert(
     """
     if not _channel_guard(interaction):
         await interaction.response.send_message(
-            "Not allowed in this channel.", ephemeral=True
-        )
+            "Not allowed in this channel."        )
         return
     price_val: float | None = None
     if price is not None:
         try:
             price_val = _parse_price(price)
         except ValueError:
-            await interaction.response.send_message("Invalid price.", ephemeral=True)
+            await interaction.response.send_message("Invalid price.",)
             return
         if price_val <= 0:
             await interaction.response.send_message(
-                "Price must be positive.", ephemeral=True
-            )
+                "Price must be positive."            )
             return
     uid = interaction.user.id
     uname = interaction.user.display_name
     suffix = f" @ {price_val}" if price_val is not None else ""
     log.info("/unalert %s%s — %s (%s)", item, suffix, uname, uid)
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
     try:
         params = {"price": price_val} if price_val is not None else {}
         wl = await _api("DELETE", f"/alert/{uid}/{item}", params=params)
@@ -594,14 +582,13 @@ async def cmd_unalert(
         await interaction.followup.send(
             content=msg,
             embed=_watchlist_embed(wl, uname),
-            ephemeral=True,
-        )
+                   )
     except httpx.HTTPStatusError as exc:
         log.warning("/unalert %s failed for %s — HTTP %s: %s", item, uid, exc.response.status_code, exc.response.text[:200])
-        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
+        await interaction.followup.send(_http_error_detail(exc),)
     except Exception as exc:
         log.warning("/unalert %s failed for %s — %s: %s", item, uid, type(exc).__name__, exc)
-        await interaction.followup.send("Service unavailable.", ephemeral=True)
+        await interaction.followup.send("Service unavailable.",)
 
 
 @cmd_unalert.autocomplete("item")
