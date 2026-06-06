@@ -17,7 +17,7 @@ _items_loaded_at: float = 0.0
 _items_lock = asyncio.Lock()
 
 _price_cache: dict[str, tuple[float, ItemPrice]] = {}
-_price_lock = asyncio.Lock()
+_price_locks: dict[str, asyncio.Lock] = {}
 
 _ITEM_CACHE_TTL = float(os.environ.get("ITEM_CACHE_TTL", "3600"))
 _PRICE_CACHE_TTL = float(os.environ.get("PRICE_CACHE_TTL", "300"))
@@ -167,7 +167,9 @@ async def get_price(tag: str) -> ItemPrice:
     entry = _price_cache.get(tag)
     if entry is not None and time.monotonic() - entry[0] < _PRICE_CACHE_TTL:
         return entry[1]
-    async with _price_lock:
+    if tag not in _price_locks:
+        _price_locks[tag] = asyncio.Lock()
+    async with _price_locks[tag]:
         entry = _price_cache.get(tag)
         if entry is not None and time.monotonic() - entry[0] < _PRICE_CACHE_TTL:
             return entry[1]

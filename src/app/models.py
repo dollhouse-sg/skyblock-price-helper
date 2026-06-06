@@ -65,14 +65,10 @@ class Watchlist(BaseModel):
     Attributes:
         discord_id: The owning Discord user's snowflake ID.
         items: Ordered list of watched items.
-        action: Human-readable description of the change that produced this
-            response (e.g. "added", "removed", "alert_set", "alert_cleared").
-            None for plain fetch responses.
     """
 
     discord_id: int
     items: list[WatchedItem]
-    action: str | None = None
 
 
 class Triggered(BaseModel):

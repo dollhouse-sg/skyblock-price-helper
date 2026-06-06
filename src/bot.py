@@ -15,6 +15,7 @@ ALLOWED = {int(c) for c in os.environ["ALLOWED_CHANNELS"].split(",") if c.strip(
 ALERT_POLL_SECONDS = int(os.environ.get("ALERT_POLL_SECONDS", "60"))
 HTTP_TIMEOUT = float(os.environ.get("HTTP_TIMEOUT", "30"))
 OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
+VERSION = "0.1.1"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -29,10 +30,10 @@ def _coin(n: float | None) -> str:
     """Format a coin value as a compact, human-readable string.
 
     Args:
-        n: The numeric value to format, or None if unavailable.
+        n: Numeric value to format, or None if unavailable.
 
     Returns:
-        A comma-formatted string with up to two decimal places and trailing
+        Comma-formatted string with up to two decimal places and trailing
         zeros stripped, or "unknown" if n is None.
     """
     if n is None:
@@ -49,6 +50,17 @@ _MAX_PRICE = 1e18
 
 
 def _parse_price(s: str) -> float:
+    """Parse a user-supplied price string into a float.
+
+    Args:
+        s: Price string, optionally suffixed with k/m/b (e.g. "110k", "1.5m").
+
+    Returns:
+        The parsed price as a float.
+
+    Raises:
+        ValueError: If the string cannot be parsed or exceeds the maximum.
+    """
     s = s.strip().lower().replace(",", "")
     suffixes = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}
     for suffix, mult in suffixes.items():
@@ -68,7 +80,7 @@ def _channel_guard(interaction: discord.Interaction) -> bool:
 
 
 async def _api(method: str, path: str, **kwargs) -> dict | list | None:
-    """Send an HTTP request to the internal API and return the parsed JSON body.
+    """Send an HTTP request to the internal API and return parsed JSON.
 
     Args:
         method: HTTP method (e.g. "GET", "POST", "DELETE").
@@ -76,8 +88,7 @@ async def _api(method: str, path: str, **kwargs) -> dict | list | None:
         **kwargs: Additional keyword arguments forwarded to httpx.
 
     Returns:
-        Parsed JSON response as a dict or list, or None for empty responses
-        (e.g. 204 No Content).
+        Parsed JSON response as a dict or list, or None for empty responses.
 
     Raises:
         httpx.HTTPStatusError: If the response status indicates an error.
@@ -89,43 +100,21 @@ async def _api(method: str, path: str, **kwargs) -> dict | list | None:
     return r.json()
 
 
-def _action_status(action: str | None) -> str | None:
-    """Convert a watchlist action token into a human-readable status line.
-
-    Tokens are unit-separator (U+001F) delimited fields. Supported kinds:
-    ``added``, ``removed``, ``alert_set``, and ``alert_cleared``.
+def _http_error_detail(exc: httpx.HTTPStatusError) -> str:
+    """Extract a user-facing error message from an HTTP error response.
 
     Args:
-        action: Action token from the API, e.g. ``"added\\x1fSugar Cane"``
-            or ``"alert_set\\x1fSugar Cane\\x1f5000"``.
+        exc: The HTTP status error.
 
     Returns:
-        A short human-readable string, or None if action is absent or
-        unrecognised.
+        Detail string from the JSON body, or a generic fallback.
     """
-    if not action:
-        return None
-    parts = action.split("\x1f", 3)
-    kind = parts[0]
-    if kind == "added" and len(parts) >= 2:
-        return f"**{parts[1]}** added to watchlist."
-    if kind == "removed" and len(parts) >= 2:
-        return f"**{parts[1]}** removed from watchlist."
-    if kind == "alert_set" and len(parts) >= 3:
+    if exc.response.status_code < 500:
         try:
-            price_str = _coin(float(parts[2]))
-        except ValueError:
-            price_str = parts[2]
-        return f"Alert set for **{parts[1]}** at **{price_str}**."
-    if kind == "alert_cleared" and len(parts) >= 3:
-        try:
-            price_str = _coin(float(parts[2]))
-        except ValueError:
-            price_str = parts[2]
-        return f"Alert cleared for **{parts[1]}** at **{price_str}**."
-    return None
-
-
+            return exc.response.json().get("detail", "Something went wrong.")
+        except Exception:
+            pass
+    return "Something went wrong. Please try again."
 
 
 def _price_embed(data: dict) -> discord.Embed:
@@ -139,10 +128,11 @@ def _price_embed(data: dict) -> discord.Embed:
     """
     embed = discord.Embed(title=data["name"], color=0xFFB6C1)
     if data["source"] == "bazaar":
-        embed.add_field(name="Buy", value=_coin(data["sell"]), inline=True)
-        embed.add_field(name="Sell", value=_coin(data["buy"]), inline=True)
+        embed.add_field(name="Buy", value=_coin(data["buy"]), inline=True)
+        embed.add_field(name="Sell", value=_coin(data["sell"]), inline=True)
     else:
         embed.add_field(name="LBIN", value=_coin(data["buy"]), inline=True)
+    embed.set_footer(text=f"v{VERSION}")
     return embed
 
 
@@ -159,6 +149,7 @@ def _watchlist_embed(wl: dict, user_name: str) -> discord.Embed:
     embed = discord.Embed(title=f"{user_name}'s Watchlist", color=0xFFB6C1)
     if not wl["items"]:
         embed.description = "No items."
+        embed.set_footer(text=f"v{VERSION}")
         return embed
     for item in wl["items"]:
         if item["source"] == "bazaar":
@@ -166,22 +157,79 @@ def _watchlist_embed(wl: dict, user_name: str) -> discord.Embed:
         else:
             val = _coin(item["buy"])
         if item["target_above"] is not None:
-            val += f"\nAlert @ {_coin(item['target_above'])}"
+            val += f"\n↑ Alert @ {_coin(item['target_above'])}"
         if item["target_below"] is not None:
-            val += f"\nAlert @ {_coin(item['target_below'])}"
+            val += f"\n↓ Alert @ {_coin(item['target_below'])}"
         embed.add_field(name=item["name"], value=val, inline=False)
+    embed.set_footer(text=f"v{VERSION}")
     return embed
 
 
 def _alert_text(hit: dict) -> str:
+    """Format an alert notification message.
+
+    Args:
+        hit: Triggered alert payload from the API.
+
+    Returns:
+        Formatted alert string for Discord.
+    """
     name = hit["name"]
     target = _coin(hit["target"])
     if hit["direction"] == "above":
         current = _coin(hit["buy"])
         return f"**{name}** is above your target of {target} — now {current}"
     else:
-        current = _coin(hit["sell"])
+        current = _coin(hit["sell"] if hit["source"] == "bazaar" else hit["buy"])
         return f"**{name}** is below your target of {target} — now {current}"
+
+
+async def _item_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice]:
+    """Autocomplete from the full item catalogue.
+
+    Args:
+        interaction: The Discord interaction context.
+        current: Partial string typed so far.
+
+    Returns:
+        Up to 25 matching Choice objects.
+    """
+    try:
+        choices = (
+            await _api("GET", "/items", params={"query": current, "limit": 25}) or []
+        )
+        return [
+            app_commands.Choice(name=c["name"][:100], value=c["tag"][:100])
+            for c in choices
+        ]
+    except Exception:
+        return []
+
+
+async def _watchlist_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice]:
+    """Autocomplete from the user's watchlist items.
+
+    Args:
+        interaction: The Discord interaction context.
+        current: Partial string typed so far.
+
+    Returns:
+        Up to 25 matching Choice objects.
+    """
+    try:
+        wl = await _api("GET", f"/watchlist/{interaction.user.id}") or {}
+        q = current.lower()
+        return [
+            app_commands.Choice(name=i["name"][:100], value=i["tag"][:100])
+            for i in wl.get("items", [])
+            if not q or q in i["name"].lower() or q in i["tag"].lower()
+        ][:25]
+    except Exception:
+        return []
 
 
 @tree.command(name="logs", description="Send recent log files.")
@@ -201,9 +249,11 @@ async def cmd_logs(interaction: discord.Interaction) -> None:
         return
     await interaction.response.defer()
     base = os.environ.get("LOG_DIR", "logs")
-    date_dirs = sorted(
-        d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))
-    ) if os.path.isdir(base) else []
+    date_dirs = (
+        sorted(d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d)))
+        if os.path.isdir(base)
+        else []
+    )
     log_dir = os.path.join(base, date_dirs[-1]) if date_dirs else base
     files = []
     for name in ("bot.log", "api.log"):
@@ -231,28 +281,46 @@ async def cmd_help(interaction: discord.Interaction) -> None:
         interaction: The Discord interaction context.
     """
     log.info("/help — %s (%s)", interaction.user.display_name, interaction.user.id)
-    embed = discord.Embed(title="Command Guide", color=0xFFB6C1)
+    embed = discord.Embed(
+        title="Command Guide", 
+        color=0xFFB6C1
+    )
     embed.add_field(
-        name="/price <item>",
-        value="Look up current price for item.",
+        name="/price <item>", 
+        value="Look up current price.", 
+        inline=False
+    )
+    embed.add_field(
+        name="/watchlist", 
+        value="Show your watchlist.", 
+        inline=False
+    )
+    embed.add_field(
+        name="/watch <item>", 
+        value="Add an item to your watchlist.", 
+        inline=False
+    )
+    embed.add_field(
+        name="/unwatch <item>",
+        value="Remove an item and all its alerts.",
         inline=False,
     )
     embed.add_field(
-        name="/watch",
-        value="Display watchlist.",
+        name="/alert <item> <price>",
+        value="Set a price alert (e.g. 110k, 1.5m, 2b).",
         inline=False,
     )
     embed.add_field(
-        name="/watch <item>",
-        value="Add an item to watchlist. Run again to remove item.",
+        name="/unalert <item>",
+        value="Remove all alerts for an item.",
         inline=False,
     )
     embed.add_field(
-        name="/watch <item> <price>",
-        value="Set price alert for item.",
+        name="/unalert <item> <price>",
+        value="Remove a specific price alert.",
         inline=False,
     )
-    embed.set_footer(text="made with ❤️ in Singapore • v0.1.0")
+    embed.set_footer(text=f"made with ❤️ in Singapore • v{VERSION}")
     await interaction.response.send_message(embed=embed)
 
 
@@ -263,7 +331,7 @@ async def cmd_price(interaction: discord.Interaction, item: str) -> None:
 
     Args:
         interaction: The Discord interaction context.
-        item: Item tag supplied by the user (autocompleted).
+        item: Item tag supplied by the user.
     """
     if not _channel_guard(interaction):
         await interaction.response.send_message(
@@ -282,14 +350,7 @@ async def cmd_price(interaction: discord.Interaction, item: str) -> None:
         await interaction.followup.send(embed=_price_embed(data))
     except httpx.HTTPStatusError as exc:
         log.warning("/price %s failed for %s — %s", item, interaction.user.id, exc)
-        if exc.response.status_code < 500:
-            try:
-                detail = exc.response.json().get("detail", "Something went wrong.")
-            except Exception:
-                detail = "Something went wrong."
-        else:
-            detail = "Something went wrong. Please try again."
-        await interaction.followup.send(detail, ephemeral=True)
+        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
     except Exception:
         await interaction.followup.send("Service unavailable.", ephemeral=True)
 
@@ -298,96 +359,70 @@ async def cmd_price(interaction: discord.Interaction, item: str) -> None:
 async def price_autocomplete(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice]:
-    """Autocomplete handler for the /price item argument.
+    """Autocomplete for /price item argument."""
+    return await _item_autocomplete(interaction, current)
+
+
+@tree.command(name="watchlist", description="Show your watchlist.")
+async def cmd_watchlist(interaction: discord.Interaction) -> None:
+    """Display the user's watchlist with live prices.
 
     Args:
         interaction: The Discord interaction context.
-        current: The partial string typed so far.
-
-    Returns:
-        Up to 25 matching app_commands.Choice objects.
-    """
-    return await _autocomplete(current)
-
-
-@tree.command(name="watch", description="Manage watchlist.")
-@app_commands.describe(
-    item="Item tag or name.",
-    price="Alert price target (e.g. 110k, 1.5m, 2b).",
-)
-async def cmd_watch(
-    interaction: discord.Interaction,
-    item: str | None = None,
-    price: str | None = None,
-) -> None:
-    """Show, add/remove, or set a price alert on the watchlist.
-
-    Args:
-        interaction: The Discord interaction context.
-        item: Item tag to add, remove, or alert on; omit to show the list.
-        price: Target price for an alert.
     """
     if not _channel_guard(interaction):
         await interaction.response.send_message(
             "Not allowed in this channel.", ephemeral=True
         )
         return
-    if price is not None and item is None:
-        await interaction.response.send_message(
-            "Specify an item.", ephemeral=True
-        )
-        return
-    price_val: float | None = None
-    if price is not None:
-        try:
-            price_val = _parse_price(price)
-        except ValueError:
-            await interaction.response.send_message(
-                "Invalid price.",
-                ephemeral=True,
-            )
-            return
-        if price_val <= 0:
-            await interaction.response.send_message(
-                "Price must be positive.", ephemeral=True
-            )
-            return
-    await interaction.response.defer()
     uid = interaction.user.id
     uname = interaction.user.display_name
+    log.info("/watchlist — %s (%s)", uname, uid)
+    await interaction.response.defer(ephemeral=True)
     try:
-        if item is None:
-            log.info("/watch show — %s (%s)", uname, uid)
-            wl = await _api("GET", f"/watch/{uid}")
-            await interaction.followup.send(embed=_watchlist_embed(wl, uname))
-            return
-        if price_val is not None:
-            log.info("/watch alert %s @ %s — %s (%s)", item, price_val, uname, uid)
-            wl = await _api(
-                "POST",
-                f"/watch/{uid}/{item}/notify",
-                params={
-                    "price": price_val,
-                    "channel_id": interaction.channel_id,
-                },
-            )
-        else:
-            log.info("/watch toggle %s — %s (%s)", item, uname, uid)
-            wl = await _api("POST", f"/watch/{uid}/{item}/toggle")
-        status = _action_status(wl.get("action"))
+        wl = await _api("GET", f"/watchlist/{uid}")
         await interaction.followup.send(
-            content=status, embed=_watchlist_embed(wl, uname), ephemeral=True
+            embed=_watchlist_embed(wl, uname), ephemeral=True
+        )
+    except httpx.HTTPStatusError as exc:
+        log.warning("/watchlist failed for %s — %s", uid, exc)
+        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
+    except Exception:
+        await interaction.followup.send("Service unavailable.", ephemeral=True)
+
+
+@tree.command(name="watch", description="Add an item to your watchlist.")
+@app_commands.describe(item="Item tag or name.")
+async def cmd_watch(interaction: discord.Interaction, item: str) -> None:
+    """Add an item to the user's watchlist.
+
+    Args:
+        interaction: The Discord interaction context.
+        item: Item tag to add.
+    """
+    if not _channel_guard(interaction):
+        await interaction.response.send_message(
+            "Not allowed in this channel.", ephemeral=True
+        )
+        return
+    uid = interaction.user.id
+    uname = interaction.user.display_name
+    log.info("/watch %s — %s (%s)", item, uname, uid)
+    await interaction.response.defer(ephemeral=True)
+    try:
+        wl = await _api("POST", f"/watch/{uid}/{item}")
+        added = next(
+            (i for i in wl["items"] if i["tag"].upper() == item.upper()), None
+        )
+        name = added["name"] if added else item
+        await interaction.followup.send(
+            content=f"**{name}** added to your watchlist.",
+            embed=_watchlist_embed(wl, uname),
+            ephemeral=True,
         )
     except httpx.HTTPStatusError as exc:
         log.warning("/watch %s failed for %s — %s", item, uid, exc)
-        if exc.response.status_code < 500:
-            try:
-                detail = exc.response.json().get("detail", "Something went wrong.")
-            except Exception:
-                detail = "Something went wrong."
-        else:
-            detail = "Something went wrong. Please try again."
-        await interaction.followup.send(detail, ephemeral=True)
+        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
     except Exception:
         await interaction.followup.send("Service unavailable.", ephemeral=True)
 
@@ -396,37 +431,182 @@ async def cmd_watch(
 async def watch_autocomplete(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice]:
-    """Autocomplete handler for the /watch item argument.
+    """Autocomplete for /watch item argument."""
+    return await _item_autocomplete(interaction, current)
+
+
+@tree.command(
+    name="unwatch",
+    description="Remove an item and all its alerts from your watchlist.",
+)
+@app_commands.describe(item="Item tag or name.")
+async def cmd_unwatch(interaction: discord.Interaction, item: str) -> None:
+    """Remove an item and all its alerts from the user's watchlist.
 
     Args:
         interaction: The Discord interaction context.
-        current: The partial string typed so far.
-
-    Returns:
-        Up to 25 matching app_commands.Choice objects.
+        item: Item tag to remove.
     """
-    return await _autocomplete(current)
+    if not _channel_guard(interaction):
+        await interaction.response.send_message(
+            "Not allowed in this channel.", ephemeral=True
+        )
+        return
+    uid = interaction.user.id
+    uname = interaction.user.display_name
+    log.info("/unwatch %s — %s (%s)", item, uname, uid)
+    await interaction.response.defer(ephemeral=True)
+    try:
+        wl = await _api("DELETE", f"/watch/{uid}/{item}")
+        await interaction.followup.send(
+            content="Removed from your watchlist.",
+            embed=_watchlist_embed(wl, uname),
+            ephemeral=True,
+        )
+    except httpx.HTTPStatusError as exc:
+        log.warning("/unwatch %s failed for %s — %s", item, uid, exc)
+        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
+    except Exception:
+        await interaction.followup.send("Service unavailable.", ephemeral=True)
 
 
-async def _autocomplete(current: str) -> list[app_commands.Choice]:
-    """Fetch item name suggestions from the API for autocomplete fields.
+@cmd_unwatch.autocomplete("item")
+async def unwatch_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice]:
+    """Autocomplete for /unwatch item argument."""
+    return await _watchlist_autocomplete(interaction, current)
+
+
+@tree.command(name="alert", description="Set a price alert for an item.")
+@app_commands.describe(
+    item="Item tag or name.",
+    price="Target price (e.g. 110k, 1.5m, 2b).",
+)
+async def cmd_alert(
+    interaction: discord.Interaction, item: str, price: str
+) -> None:
+    """Set a price alert on an item.
 
     Args:
-        current: The partial string typed so far.
-
-    Returns:
-        Up to 25 matching app_commands.Choice objects, or an empty list on error.
+        interaction: The Discord interaction context.
+        item: Item tag to alert on.
+        price: Target price string.
     """
-    try:
-        choices = (
-            await _api("GET", "/items", params={"query": current, "limit": 25}) or []
+    if not _channel_guard(interaction):
+        await interaction.response.send_message(
+            "Not allowed in this channel.", ephemeral=True
         )
-        return [
-            app_commands.Choice(name=c["name"][:100], value=c["tag"][:100])
-            for c in choices
-        ]
+        return
+    try:
+        price_val = _parse_price(price)
+    except ValueError:
+        await interaction.response.send_message("Invalid price.", ephemeral=True)
+        return
+    if price_val <= 0:
+        await interaction.response.send_message(
+            "Price must be positive.", ephemeral=True
+        )
+        return
+    uid = interaction.user.id
+    uname = interaction.user.display_name
+    log.info("/alert %s @ %s — %s (%s)", item, price_val, uname, uid)
+    await interaction.response.defer(ephemeral=True)
+    try:
+        wl = await _api(
+            "POST",
+            f"/alert/{uid}/{item}",
+            params={"price": price_val, "channel_id": interaction.channel_id},
+        )
+        item_data = next(
+            (i for i in wl["items"] if i["tag"].upper() == item.upper()), None
+        )
+        name = item_data["name"] if item_data else item
+        await interaction.followup.send(
+            content=f"Alert set for **{name}** at **{_coin(price_val)}**.",
+            embed=_watchlist_embed(wl, uname),
+            ephemeral=True,
+        )
+    except httpx.HTTPStatusError as exc:
+        log.warning("/alert %s failed for %s — %s", item, uid, exc)
+        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
     except Exception:
-        return []
+        await interaction.followup.send("Service unavailable.", ephemeral=True)
+
+
+@cmd_alert.autocomplete("item")
+async def alert_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice]:
+    """Autocomplete for /alert item argument."""
+    return await _item_autocomplete(interaction, current)
+
+
+@tree.command(name="unalert", description="Remove price alerts from an item.")
+@app_commands.describe(
+    item="Item tag or name.",
+    price="Specific alert price to remove (optional — omit to remove all).",
+)
+async def cmd_unalert(
+    interaction: discord.Interaction,
+    item: str,
+    price: str | None = None,
+) -> None:
+    """Remove one or all price alerts from a watched item.
+
+    Args:
+        interaction: The Discord interaction context.
+        item: Item tag to clear alerts on.
+        price: Specific target price to remove; omit to clear all alerts.
+    """
+    if not _channel_guard(interaction):
+        await interaction.response.send_message(
+            "Not allowed in this channel.", ephemeral=True
+        )
+        return
+    price_val: float | None = None
+    if price is not None:
+        try:
+            price_val = _parse_price(price)
+        except ValueError:
+            await interaction.response.send_message("Invalid price.", ephemeral=True)
+            return
+        if price_val <= 0:
+            await interaction.response.send_message(
+                "Price must be positive.", ephemeral=True
+            )
+            return
+    uid = interaction.user.id
+    uname = interaction.user.display_name
+    suffix = f" @ {price_val}" if price_val is not None else ""
+    log.info("/unalert %s%s — %s (%s)", item, suffix, uname, uid)
+    await interaction.response.defer(ephemeral=True)
+    try:
+        params = {"price": price_val} if price_val is not None else {}
+        wl = await _api("DELETE", f"/alert/{uid}/{item}", params=params)
+        msg = (
+            f"Alert at **{_coin(price_val)}** removed."
+            if price_val is not None
+            else "All alerts cleared."
+        )
+        await interaction.followup.send(
+            content=msg,
+            embed=_watchlist_embed(wl, uname),
+            ephemeral=True,
+        )
+    except httpx.HTTPStatusError as exc:
+        log.warning("/unalert %s failed for %s — %s", item, uid, exc)
+        await interaction.followup.send(_http_error_detail(exc), ephemeral=True)
+    except Exception:
+        await interaction.followup.send("Service unavailable.", ephemeral=True)
+
+
+@cmd_unalert.autocomplete("item")
+async def unalert_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice]:
+    """Autocomplete for /unalert item argument."""
+    return await _watchlist_autocomplete(interaction, current)
 
 
 async def alert_loop() -> None:
@@ -445,7 +625,9 @@ async def alert_loop() -> None:
             await asyncio.sleep(ALERT_POLL_SECONDS)
             continue
         for hit in hits:
-            clear_path = f"/notifications/{hit['discord_id']}/{hit['tag']}/{hit['direction']}"
+            clear_path = (
+                f"/notifications/{hit['discord_id']}/{hit['tag']}/{hit['direction']}"
+            )
             try:
                 ch = client.get_channel(hit["channel_id"])
                 if ch is None:
@@ -462,12 +644,17 @@ async def alert_loop() -> None:
                 await _api("DELETE", clear_path)
                 log.info(
                     "alert delivered: %s → %s (%s %s)",
-                    hit["name"], hit["discord_id"], hit["direction"], hit["target"],
+                    hit["name"],
+                    hit["discord_id"],
+                    hit["direction"],
+                    hit["target"],
                 )
             except (discord.NotFound, discord.Forbidden) as exc:
                 log.warning(
                     "alert cleared (permanent error): %s → %s — %s",
-                    hit["name"], hit["discord_id"], type(exc).__name__,
+                    hit["name"],
+                    hit["discord_id"],
+                    type(exc).__name__,
                 )
                 try:
                     await _api("DELETE", clear_path)
@@ -476,7 +663,9 @@ async def alert_loop() -> None:
             except Exception as exc:
                 log.warning(
                     "alert delivery failed: %s → %s — %s",
-                    hit["name"], hit["discord_id"], type(exc).__name__,
+                    hit["name"],
+                    hit["discord_id"],
+                    type(exc).__name__,
                 )
         await asyncio.sleep(ALERT_POLL_SECONDS)
 

@@ -67,7 +67,7 @@ async def fetch_watchlist(discord_id: int) -> list[asyncpg.Record]:
         discord_id: The Discord user's snowflake ID.
 
     Returns:
-        A list of database rows from watched_items.
+        Database rows from watched_items.
     """
     pool = await get_pool()
     return await pool.fetch(
@@ -77,8 +77,8 @@ async def fetch_watchlist(discord_id: int) -> list[asyncpg.Record]:
     )
 
 
-async def toggle_item(discord_id: int, tag: str, name: str, source: str) -> bool:
-    """Add an item to the watchlist, or remove it if already present.
+async def add_item(discord_id: int, tag: str, name: str, source: str) -> None:
+    """Add an item to the watchlist.
 
     Args:
         discord_id: The Discord user's snowflake ID.
@@ -86,12 +86,8 @@ async def toggle_item(discord_id: int, tag: str, name: str, source: str) -> bool
         name: Human-readable display name.
         source: Price source ("bazaar" or "auction").
 
-    Returns:
-        True if the item was added, False if it was removed.
-
     Raises:
-        ValueError: If the item has active alerts (must be cleared first).
-        ValueError: If the watchlist is already at its item limit.
+        ValueError: If the item is already on the watchlist or the limit is reached.
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -100,44 +96,50 @@ async def toggle_item(discord_id: int, tag: str, name: str, source: str) -> bool
             discord_id,
         )
         async with conn.transaction():
-            existing = await conn.fetchrow(
-                "SELECT target_above, target_below"
-                " FROM watched_items WHERE discord_id=$1 AND tag=$2",
+            exists = await conn.fetchval(
+                "SELECT 1 FROM watched_items WHERE discord_id=$1 AND tag=$2",
                 discord_id,
                 tag,
             )
-            if existing:
-                if (
-                    existing["target_above"] is not None
-                    or existing["target_below"] is not None
-                ):
-                    raise ValueError(
-                        "Remove all alerts on this item before removing"
-                        " it from your watchlist."
-                    )
-                await conn.execute(
-                    "DELETE FROM watched_items WHERE discord_id=$1 AND tag=$2",
-                    discord_id,
-                    tag,
-                )
-                return False
+            if exists:
+                raise ValueError(f"**{name}** is already in your watchlist.")
             count = await conn.fetchval(
-                "SELECT COUNT(*) FROM watched_items WHERE discord_id=$1", discord_id
+                "SELECT COUNT(*) FROM watched_items WHERE discord_id=$1",
+                discord_id,
             )
             if count >= WATCHLIST_LIMIT:
                 raise ValueError(f"Watchlist is full ({WATCHLIST_LIMIT} items max).")
             await conn.execute(
-                "INSERT INTO watched_items(discord_id,tag,name,source)"
-                " VALUES($1,$2,$3,$4)",
+                "INSERT INTO watched_items(discord_id, tag, name, source)"
+                " VALUES($1, $2, $3, $4)",
                 discord_id,
                 tag,
                 name,
                 source,
             )
-            return True
 
 
-async def set_notify(
+async def remove_item(discord_id: int, tag: str) -> None:
+    """Remove an item and all its alerts from the watchlist.
+
+    Args:
+        discord_id: The Discord user's snowflake ID.
+        tag: Unique item identifier.
+
+    Raises:
+        ValueError: If the item is not in the watchlist.
+    """
+    pool = await get_pool()
+    result = await pool.execute(
+        "DELETE FROM watched_items WHERE discord_id=$1 AND tag=$2",
+        discord_id,
+        tag,
+    )
+    if result == "DELETE 0":
+        raise ValueError("That item is not in your watchlist.")
+
+
+async def set_alert(
     discord_id: int,
     tag: str,
     name: str,
@@ -145,27 +147,20 @@ async def set_notify(
     price: float,
     channel_id: int,
     direction: str,
-) -> bool:
-    """Set or overwrite a price alert for one direction on a watched item.
-
-    Adds the item to the watchlist first if it is not already present.
-    Setting an alert for one direction leaves the other direction untouched.
-    Recreating the same alert in the same channel clears it (toggle off).
+) -> None:
+    """Set a directional price alert, adding the item to the watchlist if needed.
 
     Args:
         discord_id: The Discord user's snowflake ID.
         tag: Unique item identifier.
         name: Human-readable display name.
         source: Price source ("bazaar" or "auction").
-        price: Target price that triggers the alert.
-        channel_id: Discord channel to post the fired alert in.
+        price: Target price.
+        channel_id: Discord channel for the alert notification.
         direction: "above" or "below".
 
     Raises:
-        ValueError: If the watchlist is full and the item is not yet in it.
-
-    Returns:
-        True if the alert was cleared (toggled off), False if set or updated.
+        ValueError: If the watchlist is full and the item is not already in it.
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -174,86 +169,104 @@ async def set_notify(
             discord_id,
         )
         async with conn.transaction():
-            existing = await conn.fetchrow(
-                "SELECT target_above, channel_id_above, target_below, channel_id_below "
-                "FROM watched_items WHERE discord_id=$1 AND tag=$2",
+            exists = await conn.fetchval(
+                "SELECT 1 FROM watched_items WHERE discord_id=$1 AND tag=$2",
                 discord_id,
                 tag,
             )
-            if not existing:
+            if not exists:
                 count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM watched_items WHERE discord_id=$1", discord_id
+                    "SELECT COUNT(*) FROM watched_items WHERE discord_id=$1",
+                    discord_id,
                 )
                 if count >= WATCHLIST_LIMIT:
                     raise ValueError(
                         f"Watchlist is full ({WATCHLIST_LIMIT} items max)."
                     )
                 await conn.execute(
-                    "INSERT INTO watched_items(discord_id,tag,name,source)"
-                    " VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+                    "INSERT INTO watched_items(discord_id, tag, name, source)"
+                    " VALUES($1, $2, $3, $4) ON CONFLICT DO NOTHING",
                     discord_id,
                     tag,
                     name,
                     source,
                 )
-                existing = {
-                    "target_above": None,
-                    "channel_id_above": None,
-                    "target_below": None,
-                    "channel_id_below": None,
-                }
-            existing_above, existing_channel_above = (
-                existing["target_above"],
-                existing["channel_id_above"],
-            )
-            existing_below, existing_channel_below = (
-                existing["target_below"],
-                existing["channel_id_below"],
-            )
             if direction == "above":
-                if (
-                    existing_above == price
-                    and existing_channel_above == channel_id
-                ):
-                    await conn.execute(
-                        """UPDATE watched_items
-                           SET target_above=NULL, channel_id_above=NULL
-                           WHERE discord_id=$1 AND tag=$2""",
-                        discord_id,
-                        tag,
-                    )
-                    return True
                 await conn.execute(
-                    """UPDATE watched_items
-                       SET target_above=$3, channel_id_above=$4
-                       WHERE discord_id=$1 AND tag=$2""",
+                    "UPDATE watched_items"
+                    " SET target_above=$3, channel_id_above=$4"
+                    " WHERE discord_id=$1 AND tag=$2",
                     discord_id,
                     tag,
                     price,
                     channel_id,
                 )
             else:
-                if (
-                    existing_below == price
-                    and existing_channel_below == channel_id
-                ):
-                    await conn.execute(
-                        """UPDATE watched_items
-                           SET target_below=NULL, channel_id_below=NULL
-                           WHERE discord_id=$1 AND tag=$2""",
-                        discord_id,
-                        tag,
-                    )
-                    return True
                 await conn.execute(
-                    """UPDATE watched_items
-                       SET target_below=$3, channel_id_below=$4
-                       WHERE discord_id=$1 AND tag=$2""",
+                    "UPDATE watched_items"
+                    " SET target_below=$3, channel_id_below=$4"
+                    " WHERE discord_id=$1 AND tag=$2",
                     discord_id,
                     tag,
                     price,
                     channel_id,
                 )
+
+
+async def clear_alerts(
+    discord_id: int, tag: str, price: float | None = None
+) -> bool:
+    """Clear price alerts for a watched item.
+
+    Args:
+        discord_id: The Discord user's snowflake ID.
+        tag: Unique item identifier.
+        price: Specific target price to clear; omit to clear all alerts.
+
+    Returns:
+        True if at least one alert was cleared. When price is given and no
+        alert matches, returns False.
+
+    Raises:
+        ValueError: If the item is not in the watchlist.
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT target_above, target_below"
+        " FROM watched_items WHERE discord_id=$1 AND tag=$2",
+        discord_id,
+        tag,
+    )
+    if row is None:
+        raise ValueError("That item is not in your watchlist.")
+    if price is None:
+        await pool.execute(
+            "UPDATE watched_items"
+            " SET target_above=NULL, channel_id_above=NULL,"
+            "     target_below=NULL, channel_id_below=NULL"
+            " WHERE discord_id=$1 AND tag=$2",
+            discord_id,
+            tag,
+        )
+        return True
+    if row["target_above"] == price:
+        await pool.execute(
+            "UPDATE watched_items"
+            " SET target_above=NULL, channel_id_above=NULL"
+            " WHERE discord_id=$1 AND tag=$2",
+            discord_id,
+            tag,
+        )
+        return True
+    if row["target_below"] == price:
+        await pool.execute(
+            "UPDATE watched_items"
+            " SET target_below=NULL, channel_id_below=NULL"
+            " WHERE discord_id=$1 AND tag=$2",
+            discord_id,
+            tag,
+        )
+        return True
     return False
 
 
@@ -270,14 +283,14 @@ async def fetch_alerts() -> list[asyncpg.Record]:
     return await pool.fetch(
         """
         SELECT discord_id, tag, name, source,
-               'above'         AS direction,
-               target_above    AS target,
+               'above'          AS direction,
+               target_above     AS target,
                channel_id_above AS channel_id
         FROM watched_items WHERE target_above IS NOT NULL
         UNION ALL
         SELECT discord_id, tag, name, source,
-               'below'         AS direction,
-               target_below    AS target,
+               'below'          AS direction,
+               target_below     AS target,
                channel_id_below AS channel_id
         FROM watched_items WHERE target_below IS NOT NULL
         """
@@ -285,27 +298,27 @@ async def fetch_alerts() -> list[asyncpg.Record]:
 
 
 async def clear_alert(discord_id: int, tag: str, direction: str) -> None:
-    """Clear one directional alert from a watched item.
+    """Clear one directional alert after successful notification delivery.
 
     Args:
         discord_id: The Discord user's snowflake ID.
         tag: Unique item identifier.
-        direction: "above" or "below" — only that slot is cleared.
+        direction: "above" or "below".
     """
     pool = await get_pool()
     if direction == "above":
         await pool.execute(
-            """UPDATE watched_items
-               SET target_above=NULL, channel_id_above=NULL
-               WHERE discord_id=$1 AND tag=$2""",
+            "UPDATE watched_items"
+            " SET target_above=NULL, channel_id_above=NULL"
+            " WHERE discord_id=$1 AND tag=$2",
             discord_id,
             tag,
         )
     else:
         await pool.execute(
-            """UPDATE watched_items
-               SET target_below=NULL, channel_id_below=NULL
-               WHERE discord_id=$1 AND tag=$2""",
+            "UPDATE watched_items"
+            " SET target_below=NULL, channel_id_below=NULL"
+            " WHERE discord_id=$1 AND tag=$2",
             discord_id,
             tag,
         )

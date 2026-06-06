@@ -48,8 +48,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage startup and shutdown of shared resources.
 
     On startup: establishes the Postgres connection pool and pre-warms the
-    item list cache so the first request is not slow. On shutdown: closes
-    the pool and the outbound HTTP client cleanly.
+    item list cache. On shutdown: closes the pool and the outbound HTTP client.
     """
     await _retry_pool()
     await logic.get_items()
@@ -80,7 +79,7 @@ async def items(
         limit: Maximum number of results (default 25).
 
     Returns:
-        A list of matching ItemChoice objects.
+        Matching ItemChoice objects.
     """
     return await logic.search_items(query, limit)
 
@@ -93,7 +92,7 @@ async def price(tag: _Tag) -> models.ItemPrice:
         tag: The unique item identifier.
 
     Returns:
-        An ItemPrice with live price data.
+        Live price data.
 
     Raises:
         HTTPException: 404 if the tag is not recognised.
@@ -104,7 +103,7 @@ async def price(tag: _Tag) -> models.ItemPrice:
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.get("/watch/{discord_id}", response_model=models.Watchlist)
+@app.get("/watchlist/{discord_id}", response_model=models.Watchlist)
 async def get_watchlist(discord_id: _DiscordId) -> models.Watchlist:
     """Return a user's full watchlist with live prices.
 
@@ -118,19 +117,20 @@ async def get_watchlist(discord_id: _DiscordId) -> models.Watchlist:
     return models.Watchlist(discord_id=discord_id, items=await _enrich(rows))
 
 
-@app.post("/watch/{discord_id}/{tag}/toggle", response_model=models.Watchlist)
-async def toggle(discord_id: _DiscordId, tag: _Tag) -> models.Watchlist:
-    """Add an item to the watchlist, or remove it if already present.
+@app.post("/watch/{discord_id}/{tag}", response_model=models.Watchlist)
+async def add_watch(discord_id: _DiscordId, tag: _Tag) -> models.Watchlist:
+    """Add an item to the watchlist.
 
     Args:
         discord_id: The Discord user's snowflake ID.
-        tag: The unique item identifier to toggle.
+        tag: The unique item identifier.
 
     Returns:
         The updated Watchlist.
 
     Raises:
-        HTTPException: 404 if the tag is unknown; 400 if the list is full.
+        HTTPException: 404 if the tag is unknown; 400 if already present or
+            the watchlist limit is reached.
     """
     item = await logic.resolve_tag(tag)
     if item is None:
@@ -138,30 +138,51 @@ async def toggle(discord_id: _DiscordId, tag: _Tag) -> models.Watchlist:
     source = logic.item_source(item)
     name = logic.clean_name(item.get("name") or tag) or tag
     try:
-        added = await postgres.toggle_item(discord_id, tag, name, source)
+        await postgres.add_item(discord_id, tag, name, source)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     rows = await postgres.fetch_watchlist(discord_id)
-    action = f"added\x1f{name}" if added else f"removed\x1f{name}"
-    return models.Watchlist(
-        discord_id=discord_id, items=await _enrich(rows), action=action
-    )
+    return models.Watchlist(discord_id=discord_id, items=await _enrich(rows))
 
 
-@app.post("/watch/{discord_id}/{tag}/notify", response_model=models.Watchlist)
-async def notify(
+@app.delete("/watch/{discord_id}/{tag}", response_model=models.Watchlist)
+async def remove_watch(discord_id: _DiscordId, tag: _Tag) -> models.Watchlist:
+    """Remove an item and all its alerts from the watchlist.
+
+    Args:
+        discord_id: The Discord user's snowflake ID.
+        tag: The unique item identifier.
+
+    Returns:
+        The updated Watchlist.
+
+    Raises:
+        HTTPException: 404 if the item is not in the watchlist.
+    """
+    try:
+        await postgres.remove_item(discord_id, tag)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    rows = await postgres.fetch_watchlist(discord_id)
+    return models.Watchlist(discord_id=discord_id, items=await _enrich(rows))
+
+
+@app.post("/alert/{discord_id}/{tag}", response_model=models.Watchlist)
+async def add_alert(
     discord_id: _DiscordId,
     tag: _Tag,
     price: Annotated[float, Query(gt=0, le=1e18)],
     channel_id: Annotated[int, Query(gt=0)],
 ) -> models.Watchlist:
-    """Set a price alert on a watched item.
+    """Set a price alert on an item, adding it to the watchlist if needed.
+
+    Direction (above/below) is determined automatically from the current price.
 
     Args:
         discord_id: The Discord user's snowflake ID.
         tag: The unique item identifier.
         price: Target price that triggers the alert.
-        channel_id: Discord channel to post the fired alert in.
+        channel_id: Discord channel for the alert notification.
 
     Returns:
         The updated Watchlist.
@@ -184,43 +205,64 @@ async def notify(
         if low <= price <= high:
             raise HTTPException(
                 400,
-                f"Target must be below {low:,.2f} or above {high:,.2f}."
+                f"Target must be below {low:,.2f} or above {high:,.2f}.",
             )
         direction = "above" if price > high else "below"
     else:
         direction = "above" if price > current_price.buy else "below"
-        already_fired = (
-            (direction == "above" and current_price.buy >= price)
-            or (direction == "below" and current_price.buy <= price)
-        )
-        if already_fired:
+        if direction == "below" and current_price.buy <= price:
             raise HTTPException(400, "Price has already crossed that target.")
     try:
-        cleared = await postgres.set_notify(
+        await postgres.set_alert(
             discord_id, tag, name, source, price, channel_id, direction
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     rows = await postgres.fetch_watchlist(discord_id)
-    if cleared:
-        action = f"alert_cleared\x1f{name}\x1f{price}\x1f{direction}"
-    else:
-        action = f"alert_set\x1f{name}\x1f{price}\x1f{direction}"
-    return models.Watchlist(
-        discord_id=discord_id, items=await _enrich(rows), action=action
-    )
+    return models.Watchlist(discord_id=discord_id, items=await _enrich(rows))
+
+
+@app.delete("/alert/{discord_id}/{tag}", response_model=models.Watchlist)
+async def remove_alert(
+    discord_id: _DiscordId,
+    tag: _Tag,
+    price: Annotated[float | None, Query(gt=0, le=1e18)] = None,
+) -> models.Watchlist:
+    """Remove price alerts from a watched item.
+
+    Args:
+        discord_id: The Discord user's snowflake ID.
+        tag: The unique item identifier.
+        price: Specific alert price to remove; omit to clear all alerts.
+
+    Returns:
+        The updated Watchlist.
+
+    Raises:
+        HTTPException: 404 if the item is not in the watchlist or no alert
+            matched the given price.
+    """
+    try:
+        found = await postgres.clear_alerts(discord_id, tag, price)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if price is not None and not found:
+        raise HTTPException(404, "No alert found at that price.")
+    rows = await postgres.fetch_watchlist(discord_id)
+    return models.Watchlist(discord_id=discord_id, items=await _enrich(rows))
 
 
 @app.get("/notifications/triggered", response_model=list[models.Triggered])
 async def triggered() -> list[models.Triggered]:
     """Return all alerts whose price condition is currently met.
 
-    Alerts are not cleared here. The bot calls DELETE /notifications/{discord_id}/{tag}
-    after each notification is successfully delivered, so a failed delivery is
+    Alerts are not cleared here. The bot calls
+    DELETE /notifications/{discord_id}/{tag}/{direction} after each
+    notification is successfully delivered, so a failed delivery is
     automatically retried on the next poll cycle.
 
     Returns:
-        List of Triggered payloads for alerts that have crossed their target.
+        Triggered payloads for alerts that have crossed their target.
     """
     rows = await postgres.fetch_alerts()
     if not rows:
@@ -277,7 +319,7 @@ async def clear_notification(
     Args:
         discord_id: The Discord user's snowflake ID.
         tag: Unique item identifier.
-        direction: Which alert slot to clear ("above" or "below").
+        direction: "above" or "below".
     """
     await postgres.clear_alert(discord_id, tag, direction)
     log.info("alert cleared (%s): %s → %s", direction, tag, discord_id)
@@ -293,7 +335,7 @@ async def _enrich(rows: list) -> list[models.WatchedItem]:
         rows: Raw database rows from watched_items.
 
     Returns:
-        A list of WatchedItem objects with live price data attached.
+        WatchedItem objects with live price data attached.
     """
 
     async def _fetch_one(row) -> models.WatchedItem:
