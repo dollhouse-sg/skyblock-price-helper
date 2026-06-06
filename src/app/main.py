@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Path, Query
 
 from app import logic, models, postgres
 from app.log import setup as _setup_logging
+from version import VERSION
 
 log = _setup_logging("api")
 
@@ -64,7 +65,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     lifespan=lifespan,
     title="skyblock-bot",
-    version="0.1.0",
+    version=VERSION,
 )
 
 

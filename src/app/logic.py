@@ -228,6 +228,9 @@ async def fetch_price_fresh(tag: str) -> ItemPrice:
             exc.request.url,
             exc.response.text[:200],
         )
+        return ItemPrice(
+            tag=tag, name=name, source=source, buy=None, sell=None, status="unknown"
+        )
     except Exception as exc:
         log.warning("price fetch failed: %s — %s: %s", tag, type(exc).__name__, exc)
         return ItemPrice(

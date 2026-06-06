@@ -7,6 +7,7 @@ import httpx
 from discord import app_commands
 
 from app.log import setup as _setup_logging
+from version import VERSION
 
 log = _setup_logging("bot")
 
@@ -15,7 +16,6 @@ ALLOWED = {int(c) for c in os.environ["ALLOWED_CHANNELS"].split(",") if c.strip(
 ALERT_POLL_SECONDS = int(os.environ.get("ALERT_POLL_SECONDS", "60"))
 HTTP_TIMEOUT = float(os.environ.get("HTTP_TIMEOUT", "30"))
 OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
-VERSION = "0.1.1"
 
 intents = discord.Intents.default()
 intents.message_content = True
